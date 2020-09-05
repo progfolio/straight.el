@@ -97,7 +97,7 @@
   ;; for windows os
   (defun straight--windows-os-p ()
     "Check if the current operating system is Windows."
-    (memq system-type '(ms-dos windows-nt cygwin)))
+    (memq system-type '(ms-dos windows-nt)))
 
   (let ((version nil)
         (straight-profiles (if (boundp 'straight-profiles)
