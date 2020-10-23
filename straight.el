@@ -4900,7 +4900,7 @@ local repository is already on disk."
 ;;;;; Recipe acquiry
 
 ;;;###autoload
-(defun straight-get-recipe (&optional sources action)
+(defun straight-get-recipe (&optional sources action filter)
   "Interactively select a recipe from one of the recipe repositories.
 All recipe repositories in `straight-recipe-repositories' will
 first be cloned. After the recipe is selected, it will be copied
@@ -4916,7 +4916,11 @@ symbol `interactive', then the user is prompted to select a
 recipe repository, and a list containing that recipe repository
 is used for the value of SOURCES. ACTION may be `copy' (copy
 recipe to the kill ring), `insert' (insert at point), or nil (no
-action, just return it)."
+action, just return it).
+
+If FILTER is non-nil, it must be a unary function which takes the list
+of package names as its argument and returns a list of package names.
+The resultant list is used as the completion candidates."
   (interactive (list (when current-prefix-arg 'interactive) 'copy))
   (when (eq sources 'interactive)
     (setq sources (list
@@ -4930,7 +4934,8 @@ action, just return it)."
     (let* ((package (intern
                      (completing-read
                       "Which recipe? "
-                      (straight-recipes-list sources)
+                      (funcall (or filter #'identity)
+                               (straight-recipes-list sources))
                       (lambda (_) t)
                       'require-match)))
            ;; No need to provide a `cause' to
@@ -5004,6 +5009,16 @@ additional arguments."
   :type 'hook)
 
 ;;;###autoload
+(defun straight--installed-packages ()
+  "Return a list of installed package names."
+  (let ((installed nil))
+    (maphash (lambda (package recipe)
+               (unless (or (null (plist-get recipe :local-repo))
+                           (not (straight--repository-is-available-p recipe)))
+                 (push package installed)))
+             straight--recipe-cache)
+    installed))
+
 (cl-defun straight-use-package
     (melpa-style-recipe &optional no-clone no-build cause interactive)
   "Register, clone, build, and activate a package and its dependencies.
@@ -5042,7 +5057,13 @@ hint about how to install the package permanently.
 Return non-nil if package was actually installed, and nil
 otherwise (this can only happen if NO-CLONE is non-nil)."
   (interactive
-   (list (straight-get-recipe (when current-prefix-arg 'interactive))
+   (list (straight-get-recipe
+          (when current-prefix-arg 'interactive)
+          nil
+          (lambda (packages)
+            (cl-set-difference packages
+                               (straight--installed-packages)
+                               :test 'equal)))
          nil nil nil 'interactive))
   (let ((recipe (straight--convert-recipe
                  (or
