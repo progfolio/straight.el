@@ -1,0 +1,126 @@
+* straight.el
+next-generation, purely functional package manager for the [Emacs] hacker.
+
+**Please check out the [[FAQ][#faq]] and [[news][#news]] :)**
+
+[[circleci-badge][circleci-build]] [[gitter-badge][gitter]]
+
+** Requirements
+- Emacs Version >= 25.1
+- git
+
+** Installation
+First, place the following bootstrap code in your init-file:
+
+#+begin_src emacs-lisp
+;; Uncomment the following line to use the development version of straight.el:
+;; (setq straight-repository-branch "develop")
+
+;; Uncomment the following line to make use-package install package via straight.el by default:
+;; (setq straight-use-package-by-default t)
+
+;; Uncomment the following line to use SSH as the default protocol for fetching repositories:
+;; (setq straight-vc-git-default-protocol 'ssh)
+
+(defvar bootstrap-version)
+(let ((bootstrap-file
+       (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
+      (bootstrap-version 5))
+  (unless (file-exists-p bootstrap-file)
+    (with-current-buffer
+        (url-retrieve-synchronously
+         "https://raw.githubusercontent.com/raxod502/straight.el/develop/install.el"
+         'silent 'inhibit-cookies)
+      (goto-char (point-max))
+      (eval-print-last-sexp)))
+  (load bootstrap-file nil 'nomessage))
+#+end_src
+
+Remove any code that relates to =package.el=.
+For example, references to:
+
+- =package-initialize=
+- =package-archives=
+- (if you're using [[https://www.github.com/jweigley/use-package][use-package]]) =:ensure= and =use-package-always-ensure=.
+
+Users of Emacs versions >= 27 should add:
+
+#+begin_src emacs-lisp
+(setq package-enable-at-startup nil)
+#+end_src
+
+to their [[https://www.gnu.org/software/emacs/manual/html_node/emacs/Early-Init-File.html][early init-file]] to prevent package.el loading packages prior to their init-file loading.
+
+** Usage
+
+To install a package, pass a package recipe to the =straight-use-package= command.
+A package recipe is a list which contains metadata about the package, such as its name and where/how to download and build the package.
+For example:
+
+#+begin_src emacs-lisp
+(straight-use-package '(evil :type git :host github :repo "emacs-evil/evil"))
+#+end_src
+
+You can also pass a symbol representing the package name to =straight-use-package=:
+
+#+begin_src emacs-lisp
+(straight-use-package 'evil)
+#+end_src
+
+In this case, the recipe repositories listed in =straight-recipe-repositories= are searched for the recipe.
+A recipe repository is a collection of recipes and functions which make those recipes available to =straight.el=.
+By default, =straight.el= ships with the following recipe repositories:
+
+- org-elpa
+- melpa
+- gnu-elpa-mirror
+- el-get
+- emacsmirror-mirror
+
+(evil :type git :flavor melpa :files (:defaults "doc/build/texinfo/evil.texi" (:exclude "evil-test-helpers.el") "evil-pkg.el") :host github :repo "emacs-evil/evil")
+#+begin_src emacs-lisp
+(straight-use-package '(evil :type git :host github :repo "emacs-evil/evil"))
+#+end_src
+
+*** Example Configuration
+
+The following demonstrates an example configuration which bootstraps =straight.el= and uses it to install =use-package= and some example packages:
+
+#+begin_src emacs-lisp :lexical t
+
+(setq straight-repository-branch "develop")
+(setq straight-use-package-by-default t)
+
+(defvar bootstrap-version)
+(let ((bootstrap-file
+       (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
+      (bootstrap-version 5))
+  (unless (file-exists-p bootstrap-file)
+    (with-current-buffer
+        (url-retrieve-synchronously
+         "https://raw.githubusercontent.com/raxod502/straight.el/develop/install.el"
+         'silent 'inhibit-cookies)
+      (goto-char (point-max))
+      (eval-print-last-sexp)))
+  (load bootstrap-file nil 'nomessage))
+
+
+;; Install use-package via `straight-use-package':
+(straight-use-package 'use-package)
+
+;; Install/configure example-package via `use-package' by specifying a
+;; package recipe after the `:straight` keyword:
+(use-package example-package
+  :straight '(:type git :host github :repo "user/example-package")
+  :config (message "etc."))
+
+;; Install latest version of Org:
+;; A non-nil `straight-use-package-by-default' implies the `:straight` keyword here:
+(use-package org)
+
+;; Which expands to:
+
+;; (progn
+;;   (straight-use-package 'org)
+;;   ;; rest of use-package declaration)
+#+end_src
