@@ -4901,7 +4901,7 @@ recipe in `straight--build-cache' for the package are updated."
     (straight--insert 2 package recipe straight--build-cache)
     ;; recompile package's dependents
     (dolist (dependent (straight-dependents package))
-      (remhash dependent straight--build-cache))))
+      (straight-rebuild-package dependent 'recursive))))
 
 ;;;; Loading packages
 
