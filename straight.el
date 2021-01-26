@@ -4871,6 +4871,14 @@ repository."
                 (straight--call "install-info" info dir)))))))))
 
 ;;;;; Cache handling
+(defun straight-dependents (package)
+  "Return a list of packages which depend on PACKAGE."
+  (let ((dependents))
+    (maphash (lambda (key val)
+               (when (member package (nth 1 val))
+                 (push key dependents)))
+             straight--build-cache)
+    (nreverse dependents)))
 
 (defun straight--declare-successful-build (recipe)
   "Update `straight--build-cache' to reflect a successful build of RECIPE.
@@ -4890,7 +4898,10 @@ recipe in `straight--build-cache' for the package are updated."
     (straight--insert 0 package
                       (format-time-string "%F %T" (time-add nil 1))
                       straight--build-cache)
-    (straight--insert 2 package recipe straight--build-cache)))
+    (straight--insert 2 package recipe straight--build-cache)
+    ;; recompile package's dependents
+    (dolist (dependent (straight-dependents package))
+      (remhash dependent straight--build-cache))))
 
 ;;;; Loading packages
 
