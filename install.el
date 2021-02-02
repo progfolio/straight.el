@@ -71,15 +71,6 @@
 (progn
   (message "Bootstrapping straight.el...")
 
-  ;; Any errors in this Emacs go directly to the user's init-file and
-  ;; abort init. Errors in the child Emacs spawned below create a
-  ;; non-zero exit code, and are re-thrown.
-  (let ((min-version "25.1"))
-    (when (version< emacs-version min-version)
-      (error (concat "straight.el requires at least Emacs %s, "
-                     "but you are running Emacs %s")
-             min-version emacs-version)))
-
   (when (boundp 'straight-repository-branch)
     (unless (stringp straight-repository-branch)
       (error "The `straight-repository-branch' must be a string (was: %S)"

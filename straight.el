@@ -37,6 +37,13 @@
 ;; variable declarations in each section, run M-x occur with the
 ;; following query: ^;;;;* \|^(
 
+;;;; Requirements
+(let ((min-version "25.1"))
+  (when (version< emacs-version min-version)
+    (error (concat "straight.el requires at least Emacs %s, "
+                   "but you are running Emacs %s")
+           min-version emacs-version)))
+
 ;;;; Detect change in Emacs version
 
 ;; This throws an error if you byte-compile it with one Emacs version
@@ -6646,6 +6653,135 @@ locally bound plist, straight-bug-report-args."
                         (delete-directory ,temp-emacs-dir 'recursive)))))
        (message "Testing straight.el in directory: %s"
                 ,temp-emacs-dir))))
+;;;; Bootstrapping
+(defvar straight--bootstrap nil
+  "Whether or not to bootstrap straight.el.")
+(when straight--bootstrap
+  (message "IN HERE")
+  ;; bootstrap
+  (message "Bootstrapping straight.el...")
+  (unless (stringp straight-repository-branch)
+    (error "The `straight-repository-branch' must be a string (was: %S)"
+           straight-repository-branch))
+  (require 'url-http)
+  ;; Because `url-http' is weird, it doesn't properly define its
+  ;; variables. So we have to do this.
+  (defvar url-http-end-of-headers)
+  (defvar url-http-response-status)
+  (let ((version nil)
+        (straight-profiles (or straight-profiles '((nil . "default.el"))))
+        (straight-install-dir (or straight-base-dir user-emacs-directory))
+        (print-length nil)
+        (print-level nil))
+    ;; The only permissible error here is for a lockfile to be absent
+    ;; entirely. Anything else triggers an abort so that we don't
+    ;; accidentally do something the user doesn't expect (like if they
+    ;; forked straight.el and made incompatible divergent changes to
+    ;; the recipe specification, and forgot to update which repository
+    ;; their init-file downloaded install.el from).
+    (dolist (lockfile-name (mapcar #'cdr straight-profiles))
+      (let ((lockfile-path (concat straight-install-dir
+                                   "straight/versions/"
+                                   lockfile-name)))
+        (when (file-exists-p lockfile-path)
+          (condition-case nil
+              (with-temp-buffer
+                (insert-file-contents-literally lockfile-path)
+                (read (current-buffer))
+                (let ((alleged-version (read (current-buffer))))
+                  (cond
+                   (version
+                    (unless (eq alleged-version version)
+                      (error (concat "Incompatible recipe versions specified "
+                                     "in version lockfiles: %S and %S")
+                             version alleged-version)))
+                   ((keywordp alleged-version)
+                    (setq version alleged-version))
+                   (t (error
+                       (concat "Invalid recipe version specified "
+                               "in version lockfile: %S")
+                       alleged-version)))))
+            ;; Prevent end-of-file errors from being swallowed (they
+            ;; are ignored by default by the debugger).
+            (end-of-file
+             (error "Malformed version lockfile: %S" lockfile-name))))))
+      ;; If no lockfile present, use latest version.
+    (unless version (setq version :beta))
+    (with-current-buffer
+        (url-retrieve-synchronously
+         (format
+          (concat "https://raw.githubusercontent.com/"
+                  "raxod502/straight.el/install/%s/straight.el")
+          (substring (symbol-name version) 1))
+         'silent 'inhibit-cookies)
+      ;; In case of 404, that means the version identifier is unknown.
+      ;; This will happen when I screw up, or if the user forks
+      ;; straight.el and changes the version identifier, but forgets
+      ;; to push a corresponding branch and override the repository
+      ;; here.
+      (unless (equal url-http-response-status 200)
+        (error "Unknown recipe version: %S" version))
+      ;; Delete the evil HTTP headers.
+     ;; (debug)
+      (delete-region (point-min) url-http-end-of-headers)
+      ;; Don't worry, this recipe will be overridden by
+      ;; `straight-recipe-overrides' if that variable has been
+      ;; set. We're just mirroring bootstrap.el. (But note that
+      ;; `:files' doesn't have to be specified, since we're
+      ;; skipping the build phase.)
+      (straight-use-package-no-build
+       `(straight :type git :host github
+                  :repo ,(format
+                          "%s/straight.el"
+                          (or straight-repository-user "raxod502"))
+                  :branch ,(or straight-repository-branch "master")))
+      (unless (and (boundp 'bootstrap-version)
+                   (integerp bootstrap-version)
+                   (>= bootstrap-version 3))
+        ;; Make a bootstrap.el symlink, for backwards compatibility
+        ;; (bootstrap snippets versioned 2 and lower expect this
+        ;; symlink to exist).
+        (let* ((recipe (gethash "straight" straight--recipe-cache))
+               (local-repo (plist-get recipe :local-repo))
+               ;; This is a relative symlink. It won't break if you
+               ;; (for some silly reason) move your
+               ;; `user-emacs-directory'.
+               (link-target (concat "repos/" local-repo "/bootstrap.el"))
+               (link-name (concat straight-install-dir
+                                  "straight/bootstrap.el")))
+          (ignore-errors
+            ;; If it's a directory, the linking will fail. Just let
+            ;; the user deal with it in that case, since they are
+            ;; doing something awfully weird.
+            (delete-file link-name))
+          ;; Unfortunately, there appears to be no way to get
+          ;; `make-symbolic-link' to overwrite an existing file,
+          ;; like 'ln -sf'. Providing the OK-IF-ALREADY-EXISTS
+          ;; argument just makes it fail silently in the case of an
+          ;; existing file. That's why we have to `delete-file'
+          ;; above.
+          (if straight-use-symlinks
+              (if (straight--windows-os-p)
+                  (call-process "cmd" nil nil nil "/c" "mklink"
+                                (subst-char-in-string ?/ ?\\ link-name)
+                                (subst-char-in-string ?/ ?\\ link-target))
+                (make-symbolic-link link-target link-name))
+            (with-temp-file link-name
+              (print
+               `(load (expand-file-name
+                       ,link-target (file-name-directory load-file-name))
+                      nil 'nomessage)
+               (current-buffer)))))))
+    (current-buffer))
+  ;;reload file
+  (when (featurep 'straight)
+    ;; reset
+    (setq straight--bootstrap nil)
+    (unload-feature 'straight t)
+    (condition-case _
+        (eval-buffer (current-buffer))
+      (error (error "Straight.el bootstrap failed: %s" (buffer-string))))))
+
 ;;;; Closing remarks
 
 (provide 'straight)
