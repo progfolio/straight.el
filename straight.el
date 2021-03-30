@@ -5466,9 +5466,6 @@ otherwise (this can only happen if NO-CLONE is non-nil)."
                (run-hook-with-args
                 'straight-use-package-pre-build-functions package)
                (straight--build-package recipe cause))
-             ;; We need to do this even if the package wasn't built,
-             ;; so we can keep track of modifications.
-             (straight--declare-successful-build recipe)
              (unless no-build
                ;; Here we are not actually trying to build the
                ;; dependencies, but activate their autoloads. (See the
@@ -5493,7 +5490,10 @@ otherwise (this can only happen if NO-CLONE is non-nil)."
                ;; Only make the package available after everything is
                ;; kosher.
                (straight--add-package-to-info-path recipe)
-               (straight--activate-package-autoloads recipe))
+               (straight--activate-package-autoloads recipe)
+               ;; We need to do this even if the package wasn't built,
+               ;; so we can keep track of modifications.
+               (straight--declare-successful-build recipe))
              ;; In interactive use, tell the user how to install
              ;; packages permanently.
              (when (and interactive (not already-registered))
