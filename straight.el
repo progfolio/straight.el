@@ -3420,6 +3420,7 @@ uses one of the Git fetchers, return it; otherwise return nil."
 (defvar straight--build-keywords '(:build
                                    :files
                                    :flavor
+                                   :includes
                                    :local-repo
                                    :pre-build
                                    :post-build)
