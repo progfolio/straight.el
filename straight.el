@@ -4450,7 +4450,14 @@ Each function recieves the current recipe as its argument.")
                 (intern (concat "straight--build-" (symbol-name step))))
               (pcase val
                 ((or 'nil 't) defaults)
-                (`(:not . ,steps) (cl-set-difference defaults steps))
+                (`(:not . ,steps)
+                 (when (member 'native-compile steps)
+                   (require 'comp)
+                   (add-to-list
+                    'comp-deferred-compilation-deny-list
+                    (format "^%s" (straight--build-dir
+                                   (plist-get recipe :package)))))
+                 (cl-set-difference defaults steps))
                 ((pred listp) val)
                 (_ defaults))))))
 
@@ -5067,6 +5074,28 @@ individual package recipe."
                   (string-match-p re file))
                 comp-deferred-compilation-deny-list)))
 
+(defun straight--build-native-deny-list ()
+  "Manage `comp-deferred-compilation-deny-list'.
+If a package's recipe calls for native compilation, we ensure it is not
+blacklisted (by us) in the deny list. Else we add it's build repo to
+the deny list. Note that we do not manage recipes for which this is
+no :local-repo."
+  (require 'comp)
+  (maphash
+   (lambda (package data)
+     (let ((recipe (nth 2 data)))
+       (when (plist-get recipe :local-repo)
+         (let ((build-steps (straight--build-steps recipe))
+               (regexp (format "^%s" (straight--build-dir package))))
+           (when build-steps
+             (if (member 'straight--build-native-compile build-steps)
+                 (setq comp-deferred-compilation-deny-list
+                       (cl-remove-if (lambda (denied) (string= denied regexp))
+                                     comp-deferred-compilation-deny-list))
+               (cl-pushnew regexp comp-deferred-compilation-deny-list
+                           :test #'string=)))))))
+   straight--build-cache))
+
 (defun straight--build-native-compile (recipe)
   "Queue native compilation for the symlinked package specified by RECIPE.
 RECIPE should be a straight.el-style plist. Note that this
@@ -5086,10 +5115,7 @@ asynchronously, and will continue in the background after
         (native-compile-async
          (straight--build-dir package)
          'recursively nil
-         #'straight--native-compile-file-p))
-      ;; Prevent compilation of this package
-      (add-to-list 'comp-deferred-compilation-deny-list
-                   (format "^%s" (straight--build-dir package))))))
+         #'straight--native-compile-file-p)))))
 
 ;;;;; Info compilation
 
@@ -6954,6 +6980,8 @@ locally bound plist, straight-bug-report-args."
        (message "Testing straight.el in directory: %s"
                 ,temp-emacs-dir))))
 ;;;; Closing remarks
+(straight--load-build-cache)
+(straight--build-native-deny-list)
 
 (provide 'straight)
 
