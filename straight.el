@@ -3971,9 +3971,8 @@ empty values (all packages will be rebuilt, with no caching)."
       (with-temp-buffer
         ;; Using `insert-file-contents-literally' avoids
         ;; `find-file-hook', etc.
-        (insert (with-temp-buffer
-                  (insert-file-contents-literally (straight--build-cache-file))
-                  (usc-normalize-NFD-string (buffer-string))))
+        (insert-file-contents-literally (straight--build-cache-file))
+        (decode-coding-region (point-min) (point-max) 'utf-8)
         (let ((version (read (current-buffer)))
               (last-emacs-version (read (current-buffer)))
               (build-cache (read (current-buffer)))
