@@ -14,6 +14,16 @@
   "Default face for packages."
   :group 'straight-faces)
 
+(defface straight-ui-marked-package
+  '((default :inherit default :weight bold :foreground "pink"))
+  "Face for marked packages."
+  :group 'straight-faces)
+
+(defface straight-ui-marked-install
+  '((default :inherit default :weight bold :foreground "#89cff0"))
+  "Face for marked packages."
+  :group 'straight-faces)
+
 (defface straight-ui-package-installed
   '((default :weight bold :foreground "orange"))
   "Default face for packages."
@@ -113,12 +123,15 @@ Toggle all if already filtered."
 
 (defvar straight-ui-mode-map (make-sparse-keymap)
   "Keymap for `straight-ui-mode'.")
+;;@REMOVE: This is just for my own convenience while testing.
+(evil-make-intercept-map straight-ui-mode-map)
 (define-derived-mode straight-ui-mode tabulated-list-mode "straight-ui"
   "Major mode to manage packages."
   (straight--ui-init)
   (tabulated-list-init-header)
   (tabulated-list-print))
 
+;;;###autoload
 (defun straight-ui ()
   "Display the UI."
   (interactive)
@@ -138,24 +151,43 @@ Toggle all if already filtered."
     ;;@INCOMPLETE: implement search operator syntax
     ;;(set-syntax-table straight-ui-search-filter-syntax-table)
     (when straight-ui-search-filter-active
-      (add-hook 'post-command-hook 'straight-ui--update-filter nil :local))))
+      (add-hook 'post-command-hook 'straight-ui--update-search-filter nil :local))))
 
 (add-hook 'minibuffer-setup-hook 'straight-ui--minibuffer-setup)
-(defun straight-ui--update-filter ()
-  "Update filter from minibuffer."
+
+
+(defcustom straight-ui-search-debounce-interval 0.5
+  "Length of time to wait before updating the search UI.
+See `run-at-time' for acceptable values."
+  :group 'straight
+  :type (or 'string 'int 'float))
+
+(defvar straight--ui-search-timer nil
+  "Timer to debounce search input.")
+
+(defun straight-ui--update-search-filter ()
+  "Update the UI to reflect search input."
   (when-let ((search-active straight-ui-search-filter-active)
              (buffer straight-ui-buffer)
              (query (minibuffer-contents-no-properties)))
-    (with-current-buffer buffer
-      (setq tabulated-list-entries
-            (if (string-empty-p query)
-                (straight-ui-melpa-list)
+    (unless (string-empty-p query)
+      (with-current-buffer buffer
+        (setq tabulated-list-entries
               (cl-remove-if-not
                (lambda (entry)
                  (cl-some (lambda (el) (ignore-errors (string-match-p query el)))
                           (butlast (cl-coerce (cadr entry) 'list))))
-               (straight-ui-melpa-list))))
-      (tabulated-list-print 'remember-pos 'update))))
+               (straight-ui-melpa-list)))
+        (tabulated-list-print 'remember-pos 'update)))))
+
+(defun straight-ui--debounce-search ()
+  "Update filter from minibuffer."
+  (if straight--ui-search-timer
+      (cancel-timer straight--ui-search-timer))
+  (setq straight--ui-search-timer
+        (run-at-time straight-ui-search-debounce-interval
+                     nil
+                     #'straight-ui--update-search-filter)))
 
 (defun straight-ui-search (&optional edit)
   "Filter current buffer by string.
@@ -173,16 +205,93 @@ If EDIT is non-nil, edit the last search."
   (interactive)
   (straight-ui-search 'edit))
 
+(defun straight-ui-package-info-page ()
+  "Display general info for package on current line."
+  (interactive)
+  (save-excursion
+    (end-of-line)
+    (browse-url-at-point)))
+
+(defvar straight-ui--marked-packages nil
+  "List of marked packages.
+Each element is a cons of (PACKAGE . ACTION)")
+
+(defun straight-ui-package-marked-p (package)
+  "Return t if PACKAGE is marked."
+  (and (member package (mapcar #'car straight-ui--marked-packages)) t))
+
+(defun straight-ui-unmark (package)
+  "Unmark PACKAGE."
+  (interactive)
+  (setq straight-ui--marked-packages
+        (cl-remove-if (lambda (cell) (string= (car cell) package))
+                      straight-ui--marked-packages))
+  (with-silent-modifications
+    (put-text-property (line-beginning-position) (line-end-position)
+                       'display nil))
+  (forward-line))
+
+(defun straight-ui-mark (package &optional action face)
+  "Mark PACKAGE for ACTION.
+ACTION is a function which will be called.
+It is passed the name of the package as its sole argument.
+If FACE is non-nil, use that instead of `straight-ui-marked-package'."
+  (interactive)
+  (cl-pushnew (cons package action) straight-ui--marked-packages
+              :test (lambda (a b) (string= (car a) (car b))))
+  (with-silent-modifications
+    (put-text-property (line-beginning-position) (line-end-position)
+                       'display
+                       (propertize (concat "* " (string-trim (thing-at-point 'line)))
+                                   'face
+                                   (or face 'straight-ui-marked-package)))
+    (forward-line)))
+
+(defun straight-ui-current-package ()
+  "Return current package of UI line as a string."
+  (or (symbol-name (get-text-property (point) 'tabulated-list-id))
+      (user-error "No package found at point")))
+
+(defun straight-ui-toggle-mark (&optional action face)
+  "Toggle ACTION mark for current package."
+  (interactive)
+  (let ((package (straight-ui-current-package)))
+    (if (straight-ui-package-marked-p package)
+        (straight-ui-unmark package)
+      (straight-ui-mark package action face))))
+
+(defun straight-ui-mark-install ()
+  "Mark package for installation."
+  (interactive)
+  (straight-ui-toggle-mark
+   (lambda (p) (straight-use-package (intern p)))
+   'straight-ui-marked-install))
+
+(defun straight-ui-execute-marks ()
+  "Execute each action in `straight-ui-marked-packages'."
+  (interactive)
+  (mapc (lambda (marked)
+          (if-let ((action (cdr marked)))
+              ;;@INCOMPLETE:
+              ;; We need to clean up (visually unmark, remove package from marked list)
+              ;; What should we do if this fails?
+              (funcall action (car marked))
+            (message "@TODO: implement generic mark prompt.")))
+        straight-ui--marked-packages))
+
 ;;;; Key bindings
-(define-key straight-ui-mode-map (kbd "I") 'straight-ui-show-installed)
-(define-key straight-ui-mode-map (kbd "s") 'straight-ui-search)
-(define-key straight-ui-mode-map (kbd "S") 'straight-ui-search-edit)
+            (define-key straight-ui-mode-map (kbd "I") 'straight-ui-show-installed)
+            (define-key straight-ui-mode-map (kbd "i") 'straight-ui-mark-install)
+            (define-key straight-ui-mode-map (kbd "s") 'straight-ui-search)
+            (define-key straight-ui-mode-map (kbd "S") 'straight-ui-search-edit)
+            (define-key straight-ui-mode-map (kbd "x") 'straight-ui-execute-marks)
+            (define-key straight-ui-mode-map (kbd "*") 'straight-ui-toggle-mark)
+            (define-key straight-ui-mode-map (kbd "RET") 'straight-ui-package-info-page)
 
 ;;;; TESTS
-;;(evil-make-intercept-map straight-ui-mode-map)
-;;(straight-ui)
-;;(straight-ui-melpa-list)
+            ;;(straight-ui)
+            ;;(straight-ui-melpa-list)
 
-(provide 'straight-ui)
+            (provide 'straight-ui)
 
 ;;; straight-ui.el ends here
