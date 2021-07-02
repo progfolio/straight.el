@@ -37,7 +37,7 @@
   :prefix "straight-ui-")
 
 ;;;; Customizations:
-(defcustom straight-ui-search-debounce-interval 0.5
+(defcustom straight-ui-search-debounce-interval 0.15
   "Length of time to wait before updating the search UI.
 See `run-at-time' for acceptable values."
   :group 'straight-ui
@@ -56,12 +56,10 @@ See `run-at-time' for acceptable values."
 (defvar straight-ui-melpa-list-cache nil "Cache of MELPA package entries.")
 (defvar straight-ui-melpa-metadata-cache nil)
 (defvar straight-ui-mode-map (make-sparse-keymap) "Keymap for `straight-ui-mode'.")
-(defvar straight-ui-package-info-buffer "*straight-package-info*" "Buffer name for package info.")
 (defvar straight-ui-package-info-mode-map (make-sparse-keymap))
-(defvar straight-ui-search-filter nil "Filter for package seraches.")
-(defvar straight-ui-search-filter-active nil "Whether or not a search filter is in progress.")
+(defvar straight-ui-search-filter nil "Filter for package searches.")
+(defvar straight-ui-search-active nil "Whether or not a search is in progress.")
 (defvar straight-ui-show-installed nil "When non-nil only show installed packages.")
-(defvar straight-ui--package-info-history nil "List of visited packages.")
 (defvar url-http-end-of-headers)
 
 ;;;; Functions:
@@ -163,37 +161,49 @@ Toggle all if already filtered."
 
 (defun straight-ui--minibuffer-setup ()
   "Set up the minibuffer for live filtering."
-  (when straight-ui-search-filter-active
-    ;;@INCOMPLETE: implement search operator syntax
-    ;;(set-syntax-table straight-ui-search-filter-syntax-table)
-    (when straight-ui-search-filter-active
-      (add-hook 'post-command-hook
-                'straight-ui--update-search-filter nil :local))))
+  (when straight-ui-search-active
+    (add-hook 'post-command-hook
+              'straight-ui--debounce-search nil :local)))
 
 (add-hook 'minibuffer-setup-hook 'straight-ui--minibuffer-setup)
 
 (defun straight-ui--parse-search-filter (filter)
-  "Return a list of form (COLUMN TEST...) for FILTER string."
-  (let (results seq)
-    (dolist (char (split-string filter "" 'omit-nulls))
-      (if (string= char "|")
-          (setq results (push (nreverse seq) results)
-                seq nil)
-        (setq seq (push char seq))))
-    (setq results (push (nreverse seq) results))
-    (mapcar (lambda (s) (split-string (string-join s "") "\s" 'omit-nulls))
-            (nreverse results))))
-
-;;(straight-ui--parse-search-filter "test ok | ok | ")
-;;len 1 = apply to everything
-;;len >1 = loop columns
+  "Return a list of form ((TAGS...) ((COLUMN)...)) for FILTER string."
+  (let* ((tags (cl-remove-if-not (lambda (s) (string-prefix-p "#" s))
+                                 (split-string filter " " 'omit-nulls)))
+         (columns (mapcar (lambda (col)
+                            (cl-remove-if
+                             (lambda (word) (member word tags))
+                             (split-string (string-trim col) " " 'omit-nulls)))
+                          (split-string filter "|"))))
+    (list (mapcar (lambda (s) (substring s 1)) tags) columns)))
 
 (defun straight-ui--query-matches-p (query subject)
   "Return t if QUERY (negated or otherwise) agrees with SUBJECT."
   (let* ((negated (and (string-prefix-p "!" query)
                        (setq query (substring query 1))))
          (match (ignore-errors (string-match-p query subject))))
-    (if negated (not match) match)))
+    (cond
+     ;;ignore negation operator by itself
+     ((string-empty-p query) t)
+     (negated (not match))
+     (t match))))
+
+(defun straight--package-on-default-branch-p (package)
+  "Return t if PACKAGE is on its default branch."
+  ;;converted recipe branch = current branch
+  (straight--with-plist
+      (nth 2 (gethash package straight--build-cache))
+      (local-repo branch remote)
+    (let* ((default-directory (straight--repos-dir local-repo))
+           (default-branch (or branch
+                               (straight-vc-git--default-remote-branch
+                                (or remote
+                                    straight-vc-git-default-remote-name)
+                                    local-repo)))
+           (status (straight-vc-git--compare-and-canonicalize
+                    default-branch "HEAD")))
+      (string= (plist-get status :left-ref) (plist-get status :right-ref)))))
 
 (defun straight-ui--update-search-filter (&optional query)
   "Update the UI to reflect search input.
@@ -202,8 +212,27 @@ If QUERY is non-nil, use that instead of the minibuffer."
              (query (or query (minibuffer-contents-no-properties))))
     (unless (string-empty-p query)
       (with-current-buffer buffer
-        (let ((queries (straight-ui--parse-search-filter query))
-              (packages (straight-ui-melpa-list)))
+        (let* ((parsed (straight-ui--parse-search-filter query))
+               (tags (car parsed))
+               (queries (cadr parsed))
+               ;;@INCOMPLETE: we need to generalize this.
+               (packages (cond
+                          ((member "no" tags)
+                           (cl-remove-if
+                            (lambda (p)
+                              (let ((package (aref (cadr p) 0)))
+                                (or (not (straight--installed-p
+                                          (nth 2 (gethash package straight--build-cache))))
+                                    (straight--package-on-default-branch-p package))))
+                            (straight-ui-melpa-list)))
+                          ;;@TODO: implement inversion via !installed?
+                          ((member "installed" tags)
+                           (cl-remove-if-not
+                            (lambda (p) (straight--installed-p
+                                         (gethash (aref (cadr p) 0)
+                                                  straight--recipe-cache)))
+                            (straight-ui-melpa-list)))
+                          (t (straight-ui-melpa-list)))))
           (setq tabulated-list-entries
                 (if (eq (length queries) 1)
                     (cl-remove-if-not
@@ -217,7 +246,6 @@ If QUERY is non-nil, use that instead of the minibuffer."
                         (cl-coerce (cadr package) 'list)))
                      packages)
                   ;;good
-
                   (cl-remove-if-not
                    (lambda (package)
                      (let ((colqueries (cl-remove-if-not
@@ -257,13 +285,13 @@ If QUERY is non-nil, use that instead of the minibuffer."
 If EDIT is non-nil, edit the last search."
   (interactive)
   (unwind-protect
-      (setq straight-ui-search-filter-active t
+      (setq straight-ui-search-active t
             straight-ui-search-filter
             (condition-case nil
                 (read-from-minibuffer "Search (empty to clear): "
                                       (when edit straight-ui-search-filter))
               (quit straight-ui-search-filter)))
-    (setq straight-ui-search-filter-active nil)
+    (setq straight-ui-search-active nil)
     (when (string-empty-p straight-ui-search-filter)
       ;;reset to default view
       (straight-ui--update-search-filter ".*"))))
@@ -273,7 +301,7 @@ If EDIT is non-nil, edit the last search."
   (interactive)
   (straight-ui-search 'edit))
 
-(defun straight-ui-package-info-page ()
+(defun straight-ui-browse-package ()
   "Display general info for package on current line."
   (interactive)
   (save-excursion
@@ -363,6 +391,7 @@ PREFIX is displayed before package name."
 (define-key straight-ui-mode-map (kbd "I") 'straight-ui-show-installed)
 (define-key straight-ui-mode-map (kbd "RET") 'straight-ui-show-package-info)
 (define-key straight-ui-mode-map (kbd "S") 'straight-ui-search-edit)
+(define-key straight-ui-mode-map (kbd "b") 'straight-ui-browse-package)
 (define-key straight-ui-mode-map (kbd "j") 'straight-ui-next-line)
 (define-key straight-ui-mode-map (kbd "k") 'straight-ui-previous-line)
 (define-key straight-ui-mode-map (kbd "i") 'straight-ui-mark-install)
@@ -383,7 +412,11 @@ PREFIX is displayed before package name."
     (straight-ui-melpa-list 'refresh)
     (straight-ui--update-search-filter straight-ui-search-filter)
     (tabulated-list-print 'remember-pos 'update)
-    (straight-ui--package-info-print straight-ui--current-package)))
+    (let ((magit-display-buffer-function
+           (lambda (buffer)
+             (display-buffer buffer '(display-buffer-same-window)))))
+      (straight-ui--package-info-print straight-ui--current-package)
+      (kill-buffer (format "straight: %s" straight-ui--current-package)))))
 
 (defun straight-ui-insert-uninstalled-buttons ()
   "Insert buttons for uninstalled packages."
@@ -411,9 +444,8 @@ PREFIX is displayed before package name."
     (if-let ((dependents (straight-dependents package)))
         (insert (straight-ui--package-info-related
                  dependents
-                 (lambda (p) (if (listp p) (car (last p)) p)))
+                 (lambda (p) (if (listp p) (car (flatten-tree (last p))) p)))
                 "\n")
-      ;;@RESERACH: I don't know how magit-cancel-section is supposed to work...
       (magit-cancel-section))))
 
 (defun straight-ui--package-info-dependencies (package)
@@ -423,7 +455,7 @@ PREFIX is displayed before package name."
     (if-let ((dependencies (straight-dependencies package)))
         (insert (straight-ui--package-info-related
                  dependencies
-                 (lambda (p) (if (listp p) (car p) p)))
+                 (lambda (p) (if (listp p) (car (flatten-tree p)) p)))
                 "\n")
       (magit-cancel-section))))
 
@@ -446,59 +478,52 @@ If not, offer to normalize."
 
 (defun straight-ui--package-info-print (package)
   "Print info for PACKAGE."
-  (with-current-buffer (get-buffer-create straight-ui-package-info-buffer)
-    (if-let* ((inhibit-read-only t)
-              ;;@DECOUPLE
-              ;;This needs to work generically for the recipe repo
-              ;;from which package was installed
-              (infos (straight-ui-melpa-list))
-              (info (car (alist-get (intern package) infos)))
-              (description (string-trim (aref info 1))))
-        (straight--with-plist (straight--convert-recipe
-                               (straight-recipes-retrieve (intern package)))
-            (local-repo included-by)
-          (setq default-directory (straight--repos-dir (or local-repo
+  (if-let* ((inhibit-read-only t)
+            ;;@DECOUPLE
+            ;;This needs to work generically for the recipe repo
+            ;;from which package was installed
+            (metadata (straight-ui-melpa-list))
+            (info (car (alist-get (intern package) metadata)))
+            (description (string-trim (aref info 1))))
+      (straight--with-plist (straight--convert-recipe
+                             (straight-recipes-retrieve (intern package)))
+          (local-repo included-by)
+        (let* ((default-directory (straight--repos-dir (or local-repo
                                                            included-by
                                                            package)))
-          (erase-buffer)
-          (goto-char (point-min))
-          (let ((installed-p (file-exists-p default-directory)))
-            (when installed-p (straight-fetch-package package 'from-upstream))
-            (magit-insert-section (straight-ui-info)
-              (magit-insert-heading package)
-              (insert description "\n"))
-            (if installed-p
-                (let (magit-section-show-child-count)
-                  (straight-ui--package-info-dependencies package)
-                  (straight-ui--package-info-dependents package)
-                  (straight-ui--package-info-branch-status package)
-                  (let ((_p (point)))
-                    (magit-insert-unpulled-from-upstream)
-                    ;; no updates
-                    ;;@INCOMPLETE: need to bound this so we don't
-                    ;;find any "(empty)" section
-                    ;; (when (re-search-backward "(empty)" p t)
-                    ;;   (save-excursion
-                    ;;     (goto-char (point-max))
-                    ;;     (dotimes (_ 2)
-                    ;;       (forward-line -1)
-                    ;;       (delete-region (point) (line-end-position))))
-                    ;;   (insert (propertize "package up to date\n"
-                    ;;                       'face '(:foreground "green"))))
-                    ))
-              (magit-insert-section
-                (straight-ui-info)
-                (straight-ui-insert-uninstalled-buttons)))
-            (magit-mode)
-            (goto-char (point-min))
-            (setq straight-ui--current-package package)))
-      (user-error "No package info for %S available" package))))
-
-;;@INCOMPLETE: Optional numeric arg
-;;;###autoload
-(defun straight-ui-package-info-history-prev ()
-  "Step back through package info history."
-  (straight-ui-show-package-info the-last-one))
+               (installed-p (file-exists-p default-directory))
+               hooks)
+          (push
+           (lambda ()
+             (magit-insert-section (straight-ui-info)
+               (magit-insert-heading package)
+               (insert description "\n")))
+           hooks)
+          (if (not installed-p)
+              (progn
+                (push (lambda ()
+                        (magit-insert-section (straight-ui-info)
+                          (straight-ui-insert-uninstalled-buttons))
+                        (insert "\n"))
+                      hooks)
+                (with-current-buffer (get-buffer-create (format "straight: %s" package))
+                  (with-silent-modifications (erase-buffer))
+                  (dolist (fn (nreverse hooks)) (funcall fn))
+                  ;;@MAYBE: get rid of this. We can't really *do* most of what magit
+                  ;;offers until we install...
+                  (magit-mode)
+                  (view-buffer-other-window (current-buffer))))
+            (straight-fetch-package package 'from-upstream)
+            (push (lambda () (straight-ui--package-info-dependencies package)) hooks)
+            (push (lambda () (straight-ui--package-info-dependents package)) hooks)
+            (let ((magit-status-sections-hook (append (nreverse hooks) magit-status-sections-hook))
+                  (magit-display-buffer-function (if (string= (buffer-name) straight-ui-buffer)
+                                                     magit-display-buffer-function
+                                                   (lambda (buffer)
+                                                     (display-buffer buffer '(display-buffer-same-window))))))
+              (magit-status-setup-buffer)))
+          (setq straight-ui--current-package package)))
+    (user-error "No package info for %S available" package)))
 
 ;;;###autoload
 (defun straight-ui-show-package-info (package)
@@ -506,17 +531,7 @@ If not, offer to normalize."
   (interactive (list (if (string= (buffer-name) straight-ui-buffer)
                          (straight-ui-current-package)
                        (straight--select-package "package info"))))
-  (straight-ui--package-info-print package)
-  (unless (string= (buffer-name) straight-ui-package-info-buffer)
-    (view-buffer-other-window straight-ui-package-info-buffer)))
-
-(defun straight-ui-follow-maybe (package)
-  "Follow the PACKAGE info."
-  (save-selected-window
-    (funcall (if (get-buffer-window straight-ui-package-info-buffer)
-                 #'straight-ui--package-info-print
-               #'straight-ui-show-package-info)
-             package)))
+  (straight-ui--package-info-print package))
 
 ;;@PERFORMANCE: too slow in use. Maybe cache git results?
 (define-minor-mode straight-ui-follow-mode
@@ -530,19 +545,20 @@ If not, offer to normalize."
   (interactive)
   (straight-ui-follow-mode 'toggle))
 
+;;@FIX: These don't work with visual selection/region
 (defun straight-ui-previous-line (&optional n)
   "Move N lines back."
   (interactive "p")
   (forward-line (- (or n 1)))
-  (when straight-ui-follow-mode (straight-ui-follow-maybe
-                                 (straight-ui-current-package))))
+  (when straight-ui-follow-mode (straight-ui--package-info-print
+                                 straight-ui--current-package)))
 
 (defun straight-ui-next-line (&optional n)
   "Move N lines back."
   (interactive "p")
   (forward-line (or n 1))
-  (when straight-ui-follow-mode (straight-ui-follow-maybe
-                                 (straight-ui-current-package))))
+  (when straight-ui-follow-mode (straight-ui--package-info-print
+                                 straight-ui--current-package)))
 
 
 (provide 'straight-ui)
