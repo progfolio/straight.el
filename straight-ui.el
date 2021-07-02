@@ -125,19 +125,14 @@ If REFRESH is non-nil, bypass `straight-ui-melpa-list-cache' cache."
                        (gethash (aref (cadr entry) 0) straight--recipe-cache)))
                     (straight-ui-melpa-list)))
 
-
 (defun straight-ui-show-installed ()
   "Show only installed packages.
 Toggle all if already filtered."
   (interactive)
-  (setq straight-ui-search-filter nil)
-  (message "Showing %S packages"
-           (if straight-ui-show-installed "all" "installed"))
-  (setq tabulated-list-entries (if straight-ui-show-installed
-                                   #'straight-ui-melpa-list
-                                 #'straight--ui-installed)
-        straight-ui-show-installed (not straight-ui-show-installed))
-  (tabulated-list-print 'remember-pos 'update))
+  (setq straight-ui-search-filter
+        (if (setq straight-ui-show-installed (not straight-ui-show-installed))
+            ".*" "#installed"))
+  (straight-ui--update-search-filter straight-ui-search-filter))
 
 (define-derived-mode straight-ui-mode tabulated-list-mode "straight-ui"
   "Major mode to manage packages."
@@ -193,9 +188,8 @@ Toggle all if already filtered."
     (let* ((default-directory (straight--repos-dir local-repo))
            (default-branch (or branch
                                (straight-vc-git--default-remote-branch
-                                (or remote
-                                    straight-vc-git-default-remote-name)
-                                    local-repo)))
+                                (or remote straight-vc-git-default-remote-name)
+                                local-repo)))
            (status (straight-vc-git--compare-and-canonicalize
                     default-branch "HEAD")))
       (string= (plist-get status :left-ref) (plist-get status :right-ref)))))
