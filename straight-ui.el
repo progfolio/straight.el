@@ -139,11 +139,6 @@ Toggle all if already filtered."
         straight-ui-show-installed (not straight-ui-show-installed))
   (tabulated-list-print 'remember-pos 'update))
 
-
-;;@REMOVE: This is just for my own convenience while testing.
-(declare-function evil-make-intercept-map "evil")
-(evil-make-intercept-map straight-ui-mode-map)
-
 (define-derived-mode straight-ui-mode tabulated-list-mode "straight-ui"
   "Major mode to manage packages."
   (straight--ui-init)
@@ -559,7 +554,6 @@ If not, offer to normalize."
   (forward-line (or n 1))
   (when straight-ui-follow-mode (straight-ui--package-info-print
                                  straight-ui--current-package)))
-
 
 (provide 'straight-ui)
 
