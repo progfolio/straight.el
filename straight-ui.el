@@ -279,14 +279,21 @@ If QUERY is non-nil, use that instead of the minibuffer."
                    packages)))
           (tabulated-list-print 'remember-pos 'update))))))
 
+(defvar straight-ui--previous-minibuffer-contents ""
+  "Keep track of minibuffer contents changes.
+Allows for less debouncing than just generally hooking into `post-command-hook'.")
+
 (defun straight-ui--debounce-search ()
   "Update filter from minibuffer."
-  (if straight-ui--search-timer
-      (cancel-timer straight-ui--search-timer))
-  (setq straight-ui--search-timer
-        (run-at-time straight-ui-search-debounce-interval
-                     nil
-                     #'straight-ui--update-search-filter)))
+  (let ((input (string-trim (minibuffer-contents-no-properties))))
+    (unless (string= input straight-ui--previous-minibuffer-contents)
+      (setq straight-ui--previous-minibuffer-contents input)
+      (if straight-ui--search-timer
+          (cancel-timer straight-ui--search-timer))
+      (setq straight-ui--search-timer
+            (run-at-time straight-ui-search-debounce-interval
+                         nil
+                         #'straight-ui--update-search-filter)))))
 
 (defun straight-ui-search (&optional edit)
   "Filter current buffer by string.
