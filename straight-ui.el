@@ -200,10 +200,21 @@ Toggle all if already filtered."
     (and (straight--installed-p (nth 2 (gethash package straight--build-cache)))
          (straight--package-on-default-branch-p package))))
 
+(defun straight-ui--worktree-dirty-p (package)
+  "Return t if PACKAGE has a dirty worktree."
+  (let ((recipe (nth 2 (gethash package straight--build-cache))))
+    (when (straight--installed-p recipe)
+  (straight--with-plist recipe (local-repo)
+    (let ((default-directory (straight--repos-dir local-repo)))
+      (not (string-empty-p
+            (straight--process-output "git" "-c" "status.branch=false"
+                                      "status" "--short"))))))))
+
 ;;@MAYBE: allow literal string searches?
 ;;similar to a macro, a tag expands to a search?
 (defcustom straight-ui-search-tags
   '(("default-branch" . straight-ui--default-branch-tag)
+    ("dirty" . (lambda (p) (straight-ui--worktree-dirty-p (aref (cadr p) 0))))
     ("installed" . (lambda (p) (straight--installed-p
                                 (gethash (aref (cadr p) 0)
                                          straight--recipe-cache)))))
