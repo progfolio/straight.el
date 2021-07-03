@@ -194,6 +194,31 @@ Toggle all if already filtered."
                     default-branch "HEAD")))
       (string= (plist-get status :left-ref) (plist-get status :right-ref)))))
 
+(defun straight-ui--default-branch-tag (row)
+  "ROW."
+  (let ((package (aref (cadr row) 0)))
+    (and (straight--installed-p (nth 2 (gethash package straight--build-cache)))
+         (straight--package-on-default-branch-p package))))
+
+;;@MAYBE: allow literal string searches?
+;;similar to a macro, a tag expands to a search?
+(defcustom straight-ui-search-tags
+  '(("default-branch" . straight-ui--default-branch-tag)
+    ("installed" . (lambda (p) (straight--installed-p
+                                (gethash (aref (cadr p) 0)
+                                         straight--recipe-cache)))))
+  "Alist of search tags.
+Each cell is of form (NAME FILTER).
+If FILTER is a function it must accept a single package as its sole
+argument and return non-nil if the package is to be kept.
+
+Each tag can be inverted in the minibuffer by prepending an
+exclamation point to it. e.g. #!installed."
+  :group 'straight-ui
+  :type 'alist)
+
+(alist-get "installed" straight-ui-search-tags nil nil #'string=)
+
 (defun straight-ui--update-search-filter (&optional query)
   "Update the UI to reflect search input.
 If QUERY is non-nil, use that instead of the minibuffer."
@@ -205,23 +230,17 @@ If QUERY is non-nil, use that instead of the minibuffer."
                (tags (car parsed))
                (queries (cadr parsed))
                ;;@INCOMPLETE: we need to generalize this.
-               (packages (cond
-                          ((member "no" tags)
-                           (cl-remove-if
-                            (lambda (p)
-                              (let ((package (aref (cadr p) 0)))
-                                (or (not (straight--installed-p
-                                          (nth 2 (gethash package straight--build-cache))))
-                                    (straight--package-on-default-branch-p package))))
-                            (straight-ui-melpa-list)))
-                          ;;@TODO: implement inversion via !installed?
-                          ((member "installed" tags)
-                           (cl-remove-if-not
-                            (lambda (p) (straight--installed-p
-                                         (gethash (aref (cadr p) 0)
-                                                  straight--recipe-cache)))
-                            (straight-ui-melpa-list)))
-                          (t (straight-ui-melpa-list)))))
+               (unfiltered (straight-ui-melpa-list))
+               (packages
+                (dolist (tag tags unfiltered)
+                  (let ((negated (and (string-prefix-p "!" tag)
+                                      (setq tag (substring tag 1)))))
+                    (when-let ((filter (alist-get tag
+                                                  straight-ui-search-tags
+                                                  nil nil #'string=)))
+                      (setq unfiltered
+                            (funcall (if negated #'cl-remove-if #'cl-remove-if-not)
+                                     filter unfiltered)))))))
           (setq tabulated-list-entries
                 (if (eq (length queries) 1)
                     (cl-remove-if-not
