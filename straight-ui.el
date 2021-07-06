@@ -204,17 +204,38 @@ Toggle all if already filtered."
   "Return t if PACKAGE has a dirty worktree."
   (let ((recipe (nth 2 (gethash package straight--build-cache))))
     (when (straight--installed-p recipe)
-  (straight--with-plist recipe (local-repo)
-    (let ((default-directory (straight--repos-dir local-repo)))
-      (not (string-empty-p
-            (straight--process-output "git" "-c" "status.branch=false"
-                                      "status" "--short"))))))))
+      (straight--with-plist recipe (local-repo)
+        (let ((default-directory (straight--repos-dir local-repo)))
+          (not (string-empty-p
+                (straight--process-output "git" "-c" "status.branch=false"
+                                          "status" "--short"))))))))
+
+(defun straight-ui--local-branch-behind-p (package)
+  "Return t if installed package has unpulled upstream changes."
+  (let ((recipe (nth 2 (gethash package straight--build-cache))))
+    (when (straight--installed-p recipe)
+      (straight--with-plist
+          (nth 2 (gethash package straight--build-cache))
+          (local-repo branch remote)
+        (straight-fetch-package package 'from-upstream)
+        (let* ((default-directory (straight--repos-dir local-repo))
+               (remote (or remote straight-vc-git-default-remote-name))
+               (default-branch (or branch
+                                   (straight-vc-git--default-remote-branch
+                                    remote
+                                    local-repo)))
+               (status (straight-vc-git--compare-and-canonicalize
+                        (concat remote "/" default-branch) "HEAD")))
+          (and
+           (plist-get status :right-is-ancestor)
+           (not (plist-get status :same))))))))
 
 ;;@MAYBE: allow literal string searches?
 ;;similar to a macro, a tag expands to a search?
 (defcustom straight-ui-search-tags
   '(("default-branch" . straight-ui--default-branch-tag)
     ("dirty" . (lambda (p) (straight-ui--worktree-dirty-p (aref (cadr p) 0))))
+    ("behind" . (lambda (p) (straight-ui--local-branch-behind-p (aref (cadr p) 0))))
     ("installed" . (lambda (p) (straight--installed-p
                                 (gethash (aref (cadr p) 0)
                                          straight--recipe-cache)))))
@@ -227,8 +248,6 @@ Each tag can be inverted in the minibuffer by prepending an
 exclamation point to it. e.g. #!installed."
   :group 'straight-ui
   :type 'alist)
-
-(alist-get "installed" straight-ui-search-tags nil nil #'string=)
 
 (defun straight-ui--update-search-filter (&optional query)
   "Update the UI to reflect search input.
@@ -415,11 +434,11 @@ PREFIX is displayed before package name."
 (define-key straight-ui-mode-map (kbd "*") 'straight-ui-toggle-mark)
 (define-key straight-ui-mode-map (kbd "F") 'straight-ui-toggle-follow-mode)
 (define-key straight-ui-mode-map (kbd "I") 'straight-ui-show-installed)
-(define-key straight-ui-mode-map (kbd "RET") 'straight-ui-show-package-info)
+(define-key straight-ui-mode-map (kbd "RET") 'straight-ui-describe-package)
 (define-key straight-ui-mode-map (kbd "S") 'straight-ui-search-edit)
 (define-key straight-ui-mode-map (kbd "b") 'straight-ui-browse-package)
-(define-key straight-ui-mode-map (kbd "j") 'straight-ui-next-line)
-(define-key straight-ui-mode-map (kbd "k") 'straight-ui-previous-line)
+;; (define-key straight-ui-mode-map (kbd "j") 'straight-ui-next-line)
+;; (define-key straight-ui-mode-map (kbd "k") 'straight-ui-previous-line)
 (define-key straight-ui-mode-map (kbd "i") 'straight-ui-mark-install)
 (define-key straight-ui-mode-map (kbd "s") 'straight-ui-search)
 (define-key straight-ui-mode-map (kbd "x") 'straight-ui-execute-marks)
@@ -456,7 +475,7 @@ PREFIX is displayed before package name."
                (make-text-button
                 package nil
                 'button-data package
-                'action (lambda (p) (straight-ui-show-package-info p))))
+                'action (lambda (p) (straight-ui-describe-package p))))
              (sort (cl-remove-duplicates
                     (mapcar filter packages)
                     :test #'string=)
@@ -552,7 +571,7 @@ If not, offer to normalize."
     (user-error "No package info for %S available" package)))
 
 ;;;###autoload
-(defun straight-ui-show-package-info (package)
+(defun straight-ui-describe-package (package)
   "Show info for PACKAGE."
   (interactive (list (if (string= (buffer-name) straight-ui-buffer)
                          (straight-ui-current-package)
