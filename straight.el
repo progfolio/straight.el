@@ -2935,7 +2935,7 @@ For example:
                     default-directory))
                 (func (intern (format "straight-recipes-%S-%S"
                                       name method))))
-            (apply func args)))))))
+            (when (functionp func) (apply func args))))))))
 
 (defun straight-recipes-retrieve (package &optional sources cause)
   "Look up a PACKAGE recipe in one or more SOURCES.
