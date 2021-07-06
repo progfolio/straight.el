@@ -3171,6 +3171,13 @@ return nil."
               (cons name plist))))
       (error nil))))
 
+;;@TODO: Functionality needs to be extracted from straight-ui.el to here.
+;;circular dependency as implemented
+(defun straight-recipes-melpa-metadata (&optional refresh)
+  "Return metadata for MELPA packages.
+If REFRESH is non-nil, bypass the cache."
+  (straight-ui-melpa-list refresh))
+
 (defun straight-recipes-melpa-list ()
   "Return a list of recipes available in MELPA, as a list of strings."
   (straight--directory-files "recipes" "^[^.]"))
