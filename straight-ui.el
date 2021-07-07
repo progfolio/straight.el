@@ -98,25 +98,50 @@ If REFRESH is non-nil, bypass `straight-ui-melpa-list-cache' cache."
       straight-ui-melpa-list-cache
     (setq straight-ui-melpa-list-cache
           (mapcar (lambda (recipe)
-                    (let* ((package (car recipe))
-                           (metadata (cdr recipe))
-                           (description (alist-get 'desc metadata ""))
-                           (properties (alist-get 'props metadata))
-                           (url (alist-get 'url properties "")))
-                      `(,package ;;ID
-                        [,(straight-ui--package-name (symbol-name package))
-                         ,description
-                         ,url])))
+                    (let ((package (symbol-name (car recipe)))
+                          (metadata (cdr recipe)))
+                      (append (list :id package :package package :source "melpa")
+                              (when-let ((description (alist-get 'desc metadata)))
+                                (list :description description))
+                              (when-let ((properties (alist-get 'props metadata)))
+                                (when-let ((url (alist-get 'url properties)))
+                                  (list :url url))))))
                   (straight-ui-melpa-recipes)))))
 
 (defun straight--ui-init ()
   "Initialize format of the UI."
   (setq tabulated-list-format
         [("Package" 20 t)
-         ("Description" 60 t)
-         ("URL" 40 t)]
+         ("Description" 80 t)
+         ("Source" 20 t)]
         tabulated-list-entries
-        #'straight-ui-melpa-list))
+        #'straight-ui-list-packages))
+
+(defun straight-ui-format-entries (entries)
+  "Format ENTRIES for use in table."
+  (mapcar (lambda (entry)
+            (list (plist-get entry :id)
+                  (vector (plist-get entry :package)
+                          (or (plist-get entry :description) "n/a")
+                          (or (plist-get entry :source) "n/a"))))
+          entries))
+
+(defun straight-ui-list-packages (&optional sources refresh raw)
+  "Return a formatted list of packages from SOURCES.
+If SOURCES is nil, each recipe repository in `straight-recipe-repositories'
+is checked if it implements metadata.
+If REFRESH is non-nil caches are bypassed.
+If RAW is non-nil, do not format for `tabulated-list-entries'."
+  (let (packages)
+    (dolist (source (or sources straight-recipe-repositories))
+      (setq packages
+            (append packages
+                    (straight-recipes 'metadata source "metadata" refresh))))
+    (cl-sort packages :key (lambda (it) (plist-get it :id)))
+  (if raw packages
+    (straight-ui-format-entries
+     (cl-remove-duplicates
+      packages :test #'string= :key (lambda (x) (plist-get x :id)))))))
 
 (defun straight--ui-installed ()
   "Return a list of installed packages."
@@ -211,7 +236,7 @@ Toggle all if already filtered."
                                           "status" "--short"))))))))
 
 (defun straight-ui--local-branch-behind-p (package)
-  "Return t if installed package has unpulled upstream changes."
+  "Return t if installed PACKAGE has unpulled upstream commits."
   (let ((recipe (nth 2 (gethash package straight--build-cache))))
     (when (straight--installed-p recipe)
       (straight--with-plist
@@ -260,7 +285,7 @@ If QUERY is non-nil, use that instead of the minibuffer."
                (tags (car parsed))
                (queries (cadr parsed))
                ;;@INCOMPLETE: we need to generalize this.
-               (unfiltered (straight-ui-melpa-list))
+               (unfiltered (straight-ui-list-packages))
                (packages
                 (dolist (tag tags unfiltered)
                   (let ((negated (and (string-prefix-p "!" tag)
