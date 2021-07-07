@@ -3123,6 +3123,22 @@ Otherwise return nil."
            :repo "https://git.sr.ht/~bzg/org-contrib"
            :files '(:defaults "lisp/*.el")))))
 
+(defun straight-recipes-org-elpa-metadata (&optional _refresh)
+  "Return metadata for org-elpa packages.
+If REFRESH is non-nil, bypass the cache."
+  '(( :id "org"
+      :package "org"
+      :description "Org mode is for keeping notes, maintaining TODO lists, \
+planning projects, and authoring documents with a fast and effective \
+plain-text system."
+      :url "https://code.orgmode.org/bzg/org-mode"
+      :source "org-elpa")
+    ( :id "org-contrib"
+      :package "org-contrib"
+      :description "Contributed Org packages in search of maintainers."
+      :url  "https://git.sr.ht/~bzg/org-contrib"
+      :source "org-elpa")))
+
 (defun straight-recipes-org-elpa-list ()
   "Return a list of Org ELPA pseudo-packages, as a list of strings."
   (list "org" "org-contrib"))
@@ -3468,6 +3484,21 @@ uses one of the Git fetchers, return it; otherwise return nil."
                                        (string= "." file))
                                      (straight--flatten load-path))))
               (list '\` (cons name plist)))))))))
+
+(defun straight-recipes-el-get-metadata (&optional _refresh)
+  "List metadata for el-get packages."
+  (let ((default-directory (expand-file-name "./recipes/")))
+    (with-temp-buffer
+      (mapcar (lambda (file)
+                (save-excursion (insert-file-contents file))
+                (let* ((p (read (current-buffer)))
+                       (name (plist-get p :name)))
+                  (setq name (if (stringp name) name (symbol-name name)))
+                  (setq p (plist-put p :id name))
+                  (setq p (plist-put p :package name))
+                  (setq p (plist-put p :url (or (plist-get p :url)
+                                                (plist-get p :website))))))
+              (straight--directory-files)))))
 
 (defun straight-recipes-el-get-list ()
   "Return a list of recipes available in `el-get', as a list of strings."
