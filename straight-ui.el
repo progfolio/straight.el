@@ -37,7 +37,7 @@
   :prefix "straight-ui-")
 
 ;;;; Customizations:
-(defcustom straight-ui-search-debounce-interval 0.15
+(defcustom straight-ui-search-debounce-interval 0.35
   "Length of time to wait before updating the search UI.
 See `run-at-time' for acceptable values."
   :group 'straight-ui
@@ -53,7 +53,7 @@ See `run-at-time' for acceptable values."
 (defvar straight-ui--current-package nil "Package currently being viewed in package info buffer.")
 (defvar straight-ui--marked-packages nil "List of marked packages. Each element is a cons of (PACKAGE . ACTION).")
 (defvar straight-ui-buffer "* straight-ui *")
-(defvar straight-ui-melpa-list-cache nil "Cache of MELPA package entries.")
+(defvar straight-ui-list-packages-cache nil "Cache of package metadata.")
 (defvar straight-ui-melpa-metadata-cache nil)
 (defvar straight-ui-mode-map (make-sparse-keymap) "Keymap for `straight-ui-mode'.")
 (defvar straight-ui-package-info-mode-map (make-sparse-keymap))
@@ -91,6 +91,7 @@ Optional argument REFRESH bypasses `straight-ui-melpa-cache'."
                              'straight-ui-package-installed
                            'straight-ui-package))))))
 
+(defvar straight-ui-melpa-list-cache nil "Cache for MELPA package metadata.")
 (defun straight-ui-melpa-list (&optional refresh)
   "Return a list of melpa packages for UI.
 If REFRESH is non-nil, bypass `straight-ui-melpa-list-cache' cache."
@@ -132,16 +133,20 @@ If SOURCES is nil, each recipe repository in `straight-recipe-repositories'
 is checked if it implements metadata.
 If REFRESH is non-nil caches are bypassed.
 If RAW is non-nil, do not format for `tabulated-list-entries'."
-  (let (packages)
-    (dolist (source (or sources straight-recipe-repositories))
-      (setq packages
-            (append packages
-                    (straight-recipes 'metadata source "metadata" refresh))))
-    (cl-sort packages :key (lambda (it) (plist-get it :id)))
-  (if raw packages
-    (straight-ui-format-entries
-     (cl-remove-duplicates
-      packages :test #'string= :key (lambda (x) (plist-get x :id)))))))
+  (if (and straight-ui-list-packages-cache (not refresh))
+      straight-ui-list-packages-cache
+    (setq straight-ui-list-packages-cache
+          (let (packages)
+            (dolist (source (or sources straight-recipe-repositories))
+              (setq packages
+                    (append packages
+                            (straight-recipes 'metadata source "metadata" refresh))))
+            (if raw packages
+              (straight-ui-format-entries
+               (cl-sort
+                (cl-remove-duplicates
+                 (nreverse packages) :test #'string= :key (lambda (x) (plist-get x :id)))
+                #'string< :key (lambda (p) (plist-get p :id)))))))))
 
 (defun straight--ui-installed ()
   "Return a list of installed packages."
@@ -413,9 +418,8 @@ PREFIX is displayed before the PACKAGE name."
 
 (defun straight-ui-current-package ()
   "Return current package of UI line as a string."
-  (if-let ((prop (get-text-property (point) 'tabulated-list-id)))
-      (symbol-name prop)
-    (user-error "No package found at point")))
+  (or (get-text-property (point) 'tabulated-list-id)
+      (user-error "No package found at point")))
 
 (defun straight-ui-toggle-mark (&optional action face prefix)
   "Toggle ACTION mark for current package.
@@ -549,11 +553,8 @@ If not, offer to normalize."
 (defun straight-ui--package-info-print (package)
   "Print info for PACKAGE."
   (if-let* ((inhibit-read-only t)
-            ;;@DECOUPLE
-            ;;This needs to work generically for the recipe repo
-            ;;from which package was installed
-            (metadata (straight-ui-melpa-list))
-            (info (car (alist-get (intern package) metadata)))
+            (metadata (straight-ui-list-packages))
+            (info (car (alist-get package metadata nil nil #'string=)))
             (description (string-trim (aref info 1))))
       (straight--with-plist (straight--convert-recipe
                              (straight-recipes-retrieve (intern package)))
@@ -566,7 +567,7 @@ If not, offer to normalize."
           (push
            (lambda ()
              (magit-insert-section (straight-ui-info)
-               (magit-insert-heading package)
+               (magit-insert-heading (propertize package 'face '(:height 2.0)))
                (insert description "\n")))
            hooks)
           (if (not installed-p)

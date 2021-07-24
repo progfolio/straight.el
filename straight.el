@@ -3496,6 +3496,11 @@ uses one of the Git fetchers, return it; otherwise return nil."
                   (setq name (if (stringp name) name (symbol-name name)))
                   (setq p (plist-put p :id name))
                   (setq p (plist-put p :package name))
+                  (setq p (plist-put p :description
+                                     (replace-regexp-in-string
+                                      "\n" " "
+                                      (plist-get p :description))))
+                  (setq p (plist-put p :source "el-get"))
                   (setq p (plist-put p :url (or (plist-get p :url)
                                                 (plist-get p :website))))))
               (straight--directory-files)))))
