@@ -1328,7 +1328,7 @@ directory and delegates to the relevant `straight-vc-TYPE-clone'
 method, where TYPE is the `:type' specified in RECIPE. If the
 repository already exists, throw an error."
   (straight--with-plist recipe
-      (type local-repo)
+      (type local-repo ref)
     (let ((straight--default-directory (straight--repos-dir)))
       (when (file-exists-p (straight--repos-dir local-repo))
         (error "Repository already exists: %S" local-repo))
@@ -1338,8 +1338,9 @@ repository already exists, throw an error."
       ;; the build cache (and we wouldn't want to engage in premature
       ;; optimization, now would we?), and also time is not really a
       ;; concern if we're already going to be cloning a repository.
-      (let ((commit (cdr (assoc
-                          local-repo (straight--lockfile-read-all)))))
+      (let ((commit (unless ref
+                      (cdr (assoc
+                            local-repo (straight--lockfile-read-all))))))
         (straight-vc 'clone type recipe commit)))))
 
 (defun straight-vc-normalize (recipe)
@@ -2413,6 +2414,18 @@ Return non-nil. If no local repository, do nothing and return non-nil."
                          (setq push-error-message
                                (string-trim stderr)))))))))))))))
 
+(cl-defun straight-vc-git--ensure-head-at-ref (local-repo ref)
+  "Ensure that LOCAL-REPO has its REF checked out."
+  (straight--process-with-result
+      (straight--process-run "git" "rev-parse" ref)
+    (if failure
+        (straight-vc-git--popup
+          (format "In repository %S, failed to parse ref %S:\n\n%s"
+                  ref
+                  local-repo (straight--split-and-trim failure 2)))
+      (string= (string-trim stdout)
+               (straight--process-output  "git" "rev-parse" "HEAD")))))
+
 (defun straight-vc-git--ensure-local (recipe)
   "Ensure that local repository for RECIPE is as expected.
 This means that the remote URLs are set correctly; there is no
@@ -2421,14 +2434,17 @@ primary :branch is checked out. The reason for \"local\" in the
 name of this function is that for normal situations, no network
 communication is done with the remotes."
   (straight-vc-git--destructure recipe
-      (local-repo branch remote)
+      (local-repo branch remote ref)
     (and (straight-vc-git--ensure-remotes recipe)
          (or (and (straight-vc-git--ensure-nothing-in-progress local-repo)
                   (straight-vc-git--ensure-worktree local-repo)
-                  (straight-vc-git--ensure-head-at-branch
-                   local-repo
-                   (or branch (straight-vc-git--default-remote-branch
-                               remote local-repo))))
+                  (if ref
+                      (straight-vc-git--ensure-head-at-ref local-repo
+                                                           ref)
+                    (straight-vc-git--ensure-head-at-branch
+                     local-repo
+                     (or branch (straight-vc-git--default-remote-branch
+                                 remote local-repo)))))
              (straight-register-repo-modification local-repo)))))
 
 (defcustom straight-vc-git-default-clone-depth 'full
@@ -2447,7 +2463,7 @@ the symbol `single-branch' to override the --no-single-branch option."
 ;;@TODO: clean this function up. We can probably refactor to avoid
 ;; repetition.
 (cl-defun straight-vc-git--clone-internal
-    (&key depth remote url repo-dir branch commit)
+    (&key depth remote url repo-dir branch commit _ref)
   "Clone a remote repository from URL.
 
 If DEPTH is the symbol `full', clone the whole history of the
@@ -2538,10 +2554,13 @@ out, signal a warning. If COMMIT is nil, check out the branch
 specified in RECIPE instead. If that fails, signal a warning."
   (straight-vc-git--destructure recipe
       (package local-repo branch nonrecursive depth
-               remote upstream-remote
+               remote upstream-remote ref
                host upstream-host
                protocol upstream-protocol
                repo upstream-repo fork-repo)
+    ;; :ref will override any commit provided up to this point.
+    ;; e.g. from a lockfile.
+    (when ref (setq commit nil branch nil))
     (unless upstream-repo
       (error "No `:repo' specified for package `%s'" package))
     (let ((success nil)
@@ -2555,26 +2574,39 @@ specified in RECIPE instead. If that fails, signal a warning."
                                              :url url
                                              :repo-dir repo-dir
                                              :branch branch
-                                             :commit commit)
+                                             :commit commit
+                                             :ref ref)
             (let* ((straight--default-directory nil)
                    (default-directory repo-dir)
                    (branch (or branch
-                               (straight-vc-git--default-remote-branch
-                                remote local-repo))))
+                               (if ref
+                                   (format "straight-ref-%s" ref)
+                                 (straight-vc-git--default-remote-branch
+                                  remote local-repo)))))
               (when fork-repo
                 (let ((url (straight-vc-git--encode-url
                             upstream-repo upstream-host upstream-protocol)))
                   (straight--process-output "git" "remote" "add"
                                             upstream-remote url)
                   (straight--process-output "git" "fetch" upstream-remote)))
-              (when commit
+              (when (setq commit
+                          (or commit
+                              (when ref
+                                (condition-case err
+                                    (straight--process-output "git" "rev-parse" ref)
+                                  ;; ((error) (error "Unable to parse :ref %S in %S" ref recipe)))))
+                                  ((error) (error err))))))
                 (unless (straight--process-run-p "git" "reset" "--hard" commit)
                   (straight--warn
                    "Could not reset to commit %S in repository %S"
                    commit local-repo)
                   ;; We couldn't check out the commit, best to proceed
                   ;; as if we weren't given one.
-                  (setq commit nil)))
+                  (setq commit nil))
+                (when ref
+                  (let ((b (straight--process-output "git" "branch" "--show-current")))
+                    (straight--process-run "git" "switch" "-c" branch)
+                    (straight--process-run "git" "branch" "-D" b))))
               (unless commit
                 (unless (straight--process-run-p
                          "git" "checkout" "-B" branch
@@ -2602,7 +2634,7 @@ specified in RECIPE instead. If that fails, signal a warning."
   "Using straight.el-style RECIPE, make the repository locally sane.
 This means that its remote URLs are set correctly; there is no
 merge currently in progress; its worktree is pristine; and the
-primary :branch is checked out."
+recipe :branch or :ref is checked out."
   (straight-vc-git--destructure recipe
       (local-repo)
     (while t
