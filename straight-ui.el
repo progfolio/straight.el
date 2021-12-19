@@ -177,7 +177,7 @@ Toggle all if already filtered."
   (with-current-buffer (get-buffer-create straight-ui-buffer)
     (unless (derived-mode-p 'straight-ui-mode)
       (straight-ui-mode))
-    (switch-to-buffer straight-ui-buffer)))
+    (pop-to-buffer straight-ui-buffer)))
 
 (defun straight-ui--minibuffer-setup ()
   "Set up the minibuffer for live filtering."
