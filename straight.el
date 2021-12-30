@@ -5268,22 +5268,18 @@ If `straight-cache-autoloads' is non-nil, read and write from the
 global autoloads cache in order to speed up this process.
 
 RECIPE is a straight.el-style plist."
-  (straight--with-plist recipe
-      (package)
+  (straight--with-plist recipe (package)
     (if straight-cache-autoloads
-        (progn
-          (unless (straight--checkhash package straight--autoloads-cache)
-            (let ((features (straight--determine-package-features package))
-                  (autoloads (straight--read-package-autoloads package)))
-              (puthash package (cons features autoloads)
-                       straight--autoloads-cache)))
-          ;; Some autoloads files expect to be loaded normally, rather
-          ;; than read and evaluated separately. Fool them.
-          (let ((load-file-name (straight--autoloads-file package))
-                (load-in-progress t))
-            ;; car is the feature list, cdr is the autoloads.
-            (dolist (form (cdr (gethash package straight--autoloads-cache)))
-              (eval form))))
+        (if-let ((autoloads (gethash package straight--autoloads-cache)))
+            ;; Some autoloads files expect to be loaded normally, rather
+            ;; than read and evaluated separately. Fool them.
+            (eval `(progn ,@(cdr autoloads))
+                  `((load-file-name   . ,(straight--autoloads-file package))
+                    (load-in-progress . t)))
+          (let ((features  (straight--determine-package-features package))
+                (autoloads (straight--read-package-autoloads package)))
+            (puthash package (cons features autoloads)
+                     straight--autoloads-cache)))
       (straight--load-package-autoloads package))))
 
 ;;;; Interactive helpers
