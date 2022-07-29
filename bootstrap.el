@@ -81,15 +81,18 @@
 
 (straight-use-recipes '(melpa :type git :host github
                               :repo "melpa/melpa"
+                              :depth 1
                               :build nil))
 
 (if straight-recipes-gnu-elpa-use-mirror
     (straight-use-recipes
      '(gnu-elpa-mirror :type git :host github
                        :repo "emacs-straight/gnu-elpa-mirror"
+                       :depth 1
                        :build nil))
   (straight-use-recipes `(gnu-elpa :type git
                                    :repo ,straight-recipes-gnu-elpa-url
+                                   :depth 1
                                    :local-repo "elpa"
                                    :build nil)))
 
@@ -97,19 +100,23 @@
  '(nongnu-elpa :type git
                :repo "https://git.savannah.gnu.org/git/emacs/nongnu.git"
                :local-repo "nongnu-elpa"
+               :depth 1
                :build nil))
 
 (straight-use-recipes '(el-get :type git :host github
                                :repo "dimitri/el-get"
+                               :depth 1
                                :build nil))
 
 (if straight-recipes-emacsmirror-use-mirror
     (straight-use-recipes
      '(emacsmirror-mirror :type git :host github
                           :repo "emacs-straight/emacsmirror-mirror"
+                          :depth 1
                           :build nil))
   (straight-use-recipes '(emacsmirror :type git :host github
                                       :repo "emacsmirror/epkgs"
+                                      :depth 1
                                       :nonrecursive t
                                       :build nil)))
 
